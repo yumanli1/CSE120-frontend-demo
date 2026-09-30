@@ -1,200 +1,410 @@
-import React, { useState } from 'react';
+import React, { useState, useRef } from 'react';
 
-// 1. Lineage Process Chain Data
-const LINEAGE_STEPS = [
-  { id: 'RAW-01', step: '1. Raw Material', name: 'LLZO Powder', machine: 'Calcination Oven 01', status: 'PASS', details: 'D50 particle size: 1.2µm' },
-  { id: 'SLURRY-02', step: '2. Slurry Prep', name: 'Separator Slurry', machine: 'Mixer Ceramic 02', status: 'ALERT', details: 'Viscosity drift +18.4%' },
-  { id: 'COAT-03', step: '3. Roll Coating', name: 'Ceramic Separator', machine: 'Slot-Die Coater 03', status: 'PASS', details: 'Film thickness: 18.6µm' },
-  { id: 'STACK-04', step: '4. Cell Stacking', name: '24-Layer Stack', machine: 'Robotic Stacker 01', status: 'PASS', details: 'Alignment error: <10µm' },
-  { id: 'WELD-05', step: '5. Tab Laser Weld', name: 'Pouch Assembly', machine: 'Laser Welder 04', status: 'PASS', details: 'Weld energy: 450W' },
-  { id: 'CELL-06', step: '6. Final Cell', name: 'Finished Cell', machine: 'EIS Tester 12', status: 'FAIL', details: 'Internal short during C/3 loop' },
-];
+const API_BASE_URL = 'http://localhost:8000';
 
 export default function App() {
-  const [selectedStep, setSelectedStep] = useState(LINEAGE_STEPS[1]); // Defaults to slurry alert
-  const [showCulprit, setShowCulprit] = useState(false);
-  const [depthHops, setDepthHops] = useState(20);
-  const [showJson, setShowJson] = useState(false);
+  // Authentication State (Section 1 Wireframe)
+  const [isAuthenticated, setIsAuthenticated] = useState(false);
+  const [username, setUsername] = useState('data-engineer');
+  const [password, setPassword] = useState('••••••••');
 
-  // Latency calculation formulas
-  const neo4jMs = Math.max(2, Math.round(1.5 + depthHops * 0.08));
-  const closureMs = Math.max(3, Math.round(2.5 + depthHops * 0.2));
-  const sqlMs = Math.min(9999, Math.round(6 * Math.pow(1.07, depthHops)));
+  // Query and Configuration State (Section 2 Right Sidebar)
+  const [unitId, setUnitId] = useState('UNIT-123');
+  const [endpointType, setEndpointType] = useState('ancestors');
+  const [backend, setBackend] = useState('recursive-sql');
+  const [maxDepth, setMaxDepth] = useState(20);
 
-  const sampleJson = {
-    endpoint: "/api/v1/lineage/traverse?unitId=CELL-QS-9841&engine=NEO4J",
-    executionTimeMs: neo4jMs,
-    totalHops: depthHops,
-    rootCauseCulprit: "SLURRY-02 (Mixer Ceramic 02)"
+  // Traversal & Telemetry Data
+  const [loading, setLoading] = useState(false);
+  const [apiError, setApiError] = useState(null);
+  const [resultsList, setResultsList] = useState(['material-1', 'process-1']);
+  const [selectedNode, setSelectedNode] = useState('process-1');
+  const [clientLatency, setClientLatency] = useState(null);
+
+  // Saved Views (Section 2 Left Sidebar)
+  const [savedViews, setSavedViews] = useState([
+    { id: 1, title: 'Anode Slurry Run #104', unit: 'UNIT-104', backend: 'neo4j', depth: 25 },
+    { id: 2, title: 'Cell Formation Audit', unit: 'UNIT-123', backend: 'recursive-sql', depth: 20 },
+    { id: 3, title: 'Separator Roll Defects', unit: 'UNIT-509', backend: 'closure-table', depth: 40 },
+  ]);
+
+  // Graph Canvas Pan & Zoom State (Section 2 Center)
+  const [zoomLevel, setZoomLevel] = useState(1);
+  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
+  const [isPanning, setIsPanning] = useState(false);
+  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
+
+  // Handle Login Submission
+  const handleLogin = (e) => {
+    e.preventDefault();
+    if (username.trim()) {
+      setIsAuthenticated(true);
+    }
   };
 
+  // Fetch Live Traversal from FastAPI
+  const handleQuery = async () => {
+    setLoading(true);
+    setApiError(null);
+    const start = performance.now();
+
+    try {
+      const res = await fetch(
+        `${API_BASE_URL}/units/${unitId}/${endpointType}?backend=${backend}&max_depth=${maxDepth}`
+      );
+      if (!res.ok) {
+        throw new Error(`Server returned ${res.status}: ${res.statusText}`);
+      }
+      const data = await res.json();
+      const end = performance.now();
+      setClientLatency((end - start).toFixed(1));
+
+      const items = data[endpointType] || [];
+      setResultsList(items);
+      setSelectedNode(items.length > 0 ? items[items.length - 1] : null);
+    } catch (err) {
+      setApiError(err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  // Graph Mouse Pan Event Handlers
+  const handleMouseDown = (e) => {
+    setIsPanning(true);
+    setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
+  };
+
+  const handleMouseMove = (e) => {
+    if (!isPanning) return;
+    setPanOffset({
+      x: e.clientX - panStart.x,
+      y: e.clientY - panStart.y,
+    });
+  };
+
+  const handleMouseUp = () => setIsPanning(false);
+
+  // -------------------------------------------------------------
+  // SECTION 1: LOGIN VIEW WIREFRAME
+  // -------------------------------------------------------------
+  if (!isAuthenticated) {
+    return (
+      <div className="min-h-screen bg-zinc-900 flex items-center justify-center p-4 font-sans">
+        <div className="w-full max-w-md bg-zinc-200 p-8 rounded-lg shadow-2xl space-y-6 text-zinc-900">
+          <div className="text-center space-y-1">
+            <h1 className="text-2xl font-bold tracking-tight">Login</h1>
+            <p className="text-xs text-zinc-600 font-mono">
+              QuantumScape Genealogy & Benchmark System
+            </p>
+          </div>
+
+          <form onSubmit={handleLogin} className="space-y-4">
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase mb-1">
+                ID / User
+              </label>
+              <input
+                type="text"
+                value={username}
+                onChange={(e) => setUsername(e.target.value)}
+                placeholder="Enter Engineer ID or Username"
+                className="w-full px-3 py-2.5 bg-zinc-600 text-white placeholder-zinc-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900"
+                required
+              />
+            </div>
+
+            <div>
+              <label className="block text-xs font-semibold text-zinc-700 uppercase mb-1">
+                Password
+              </label>
+              <input
+                type="password"
+                value={password}
+                onChange={(e) => setPassword(e.target.value)}
+                placeholder="Enter password"
+                className="w-full px-3 py-2.5 bg-zinc-600 text-white placeholder-zinc-300 rounded font-mono text-sm focus:outline-none focus:ring-2 focus:ring-zinc-900"
+                required
+              />
+            </div>
+
+            <button
+              type="submit"
+              className="w-full py-2.5 bg-zinc-900 hover:bg-black text-white font-medium text-sm rounded transition"
+            >
+              Authenticate & Enter
+            </button>
+          </form>
+
+          <div className="text-[11px] text-zinc-500 text-center font-mono pt-2 border-t border-zinc-300">
+            Internal proof-of-concept testing environment
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  // -------------------------------------------------------------
+  // SECTION 2: WORKSPACE & INTERACTIVE WIREFRAME
+  // -------------------------------------------------------------
   return (
-    <div className="max-w-5xl mx-auto p-6 space-y-6 font-sans">
-      {/* Header */}
-      <div className="flex items-center justify-between border-b border-slate-800 pb-4">
-        <div>
-          <h1 className="text-xl font-bold text-white tracking-tight">QuantumScape Battery Lineage Explorer</h1>
-          <p className="text-xs text-slate-400">Track-and-trace traversal architecture & benchmark demo</p>
-        </div>
-        <button
-          onClick={() => setShowJson(!showJson)}
-          className="text-xs font-mono bg-slate-800 hover:bg-slate-700 text-cyan-400 px-3 py-1.5 rounded border border-slate-700 transition"
-        >
-          {showJson ? 'Hide API Contract' : 'View API Contract (JSON)'}
-        </button>
-      </div>
-
-      {/* API JSON Viewer (Collapsible) */}
-      {showJson && (
-        <div className="bg-slate-900 border border-slate-800 rounded-lg p-4">
-          <p className="text-xs font-mono text-slate-400 mb-2">Unified API Response Contract (/traverse):</p>
-          <pre className="bg-slate-950 p-3 rounded text-xs font-mono text-emerald-400 overflow-x-auto">
-            {JSON.stringify(sampleJson, null, 2)}
-          </pre>
-        </div>
-      )}
-
-      {/* 1. Manufacturing Lineage Timeline */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-        <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-4">
-          Step 1: Trace Battery Genealogy (Click a step to inspect)
-        </h2>
-        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-          {LINEAGE_STEPS.map((s) => {
-            const isSelected = selectedStep.id === s.id;
-            const isHighlighted = showCulprit && s.id === 'SLURRY-02';
-
-            return (
-              <button
-                key={s.id}
-                onClick={() => setSelectedStep(s)}
-                className={`text-left p-3 rounded-lg border text-xs transition ${
-                  isHighlighted
-                    ? 'bg-rose-950/80 border-rose-500 ring-2 ring-rose-500'
-                    : isSelected
-                    ? 'bg-slate-800 border-blue-500 ring-1 ring-blue-500'
-                    : 'bg-slate-900/60 border-slate-800 hover:border-slate-700'
-                }`}
-              >
-                <div className="text-[10px] text-slate-400">{s.step}</div>
-                <div className="font-bold text-slate-100 truncate mt-0.5">{s.name}</div>
-                <span className={`inline-block mt-2 text-[9px] font-bold px-1.5 py-0.5 rounded font-mono ${
-                  s.status === 'PASS' ? 'bg-emerald-950 text-emerald-300 border border-emerald-800' :
-                  s.status === 'ALERT' ? 'bg-amber-950 text-amber-300 border border-amber-800' :
-                  'bg-rose-950 text-rose-300 border border-rose-800'
-                }`}>
-                  {s.status}
-                </span>
-              </button>
-            );
-          })}
+    <div className="min-h-screen bg-zinc-900 text-zinc-100 flex flex-col font-sans select-none">
+      
+      {/* Top Navigation / Tool Bar */}
+      <header className="h-14 bg-zinc-300 text-zinc-900 border-b border-zinc-400 px-6 flex items-center justify-between shadow-sm">
+        <div className="flex items-center space-x-4">
+          <span className="font-bold text-sm uppercase tracking-wider font-mono">
+            Navigation / Tool Bar
+          </span>
+          <span className="text-xs bg-zinc-200 px-2 py-0.5 rounded text-zinc-700 font-mono">
+            Session: {username}
+          </span>
         </div>
 
-        {/* Selected Step Inspector */}
-        <div className="mt-4 p-3 bg-slate-950/60 rounded-lg border border-slate-800 flex flex-wrap items-center justify-between text-xs gap-3">
-          <div>
-            <span className="text-slate-400">Selected Node: </span>
-            <span className="font-mono font-bold text-cyan-400">{selectedStep.id} ({selectedStep.name})</span>
-          </div>
-          <div>
-            <span className="text-slate-400">Equipment: </span>
-            <span className="font-mono text-slate-200">{selectedStep.machine}</span>
-          </div>
-          <div>
-            <span className="text-slate-400">Inline Note: </span>
-            <span className="font-mono text-amber-300">{selectedStep.details}</span>
-          </div>
-        </div>
-      </div>
-
-      {/* 2. Failure Cohort Common Ancestor Intersector */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-          <div>
-            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Step 2: Failure Cohort Root-Cause Intersector
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">Find shared upstream machines/batches between failing cells</p>
-          </div>
+        <div className="flex items-center space-x-3 text-xs">
+          {clientLatency && (
+            <span className="text-zinc-600 font-mono hidden sm:inline">
+              Latency: <b>{clientLatency}ms</b>
+            </span>
+          )}
           <button
-            onClick={() => {
-              setShowCulprit(true);
-              setSelectedStep(LINEAGE_STEPS[1]);
-            }}
-            className="bg-rose-600 hover:bg-rose-500 text-white text-xs font-semibold px-3 py-1.5 rounded transition"
+            onClick={() => setIsAuthenticated(false)}
+            className="px-3 py-1 bg-zinc-800 hover:bg-black text-white rounded font-medium transition"
           >
-            Find Common Failure Point
+            Sign Out
           </button>
         </div>
+      </header>
 
-        {showCulprit ? (
-          <div className="p-3 bg-rose-950/30 border border-rose-800/60 rounded-lg text-xs flex items-center justify-between">
-            <span className="text-rose-200">
-              🚨 <b>Common Upstream Bottleneck:</b> Batch <b>SLURRY-02</b> mixed on <b>Mixer Ceramic 02</b> (Viscosity +18.4% variance).
-            </span>
-            <span className="text-rose-400 font-mono text-[11px] font-bold">100% Correlation</span>
+      {/* Main 3-Column Workspace */}
+      <div className="flex-1 flex overflow-hidden p-3 gap-3">
+        
+        {/* Left Column: Saved Views */}
+        <aside className="w-56 bg-zinc-700 text-zinc-200 rounded flex flex-col border border-zinc-600 p-3">
+          <div className="font-semibold text-xs uppercase tracking-wider text-zinc-300 pb-2 border-b border-zinc-600">
+            Saved Views
           </div>
-        ) : (
-          <div className="text-xs text-slate-400 italic">Click the button above to run ancestry intersection.</div>
-        )}
-      </div>
+          
+          <div className="flex-1 overflow-y-auto mt-3 space-y-2 text-xs">
+            {savedViews.map((view) => (
+              <div
+                key={view.id}
+                onClick={() => {
+                  setUnitId(view.unit);
+                  setBackend(view.backend);
+                  setMaxDepth(view.depth);
+                }}
+                className="p-2 bg-zinc-800/80 hover:bg-zinc-800 rounded border border-zinc-600 cursor-pointer transition"
+              >
+                <div className="font-bold text-white truncate">{view.title}</div>
+                <div className="text-[10px] text-zinc-400 font-mono mt-0.5">
+                  {view.unit} • {view.backend}
+                </div>
+              </div>
+            ))}
+          </div>
 
-      {/* 3. Three-Way Architecture Benchmark */}
-      <div className="bg-slate-900 border border-slate-800 rounded-xl p-5">
-        <div className="flex flex-wrap items-center justify-between gap-3 mb-4">
+          <button
+            onClick={() =>
+              setSavedViews([
+                ...savedViews,
+                { id: Date.now(), title: `Query ${unitId}`, unit: unitId, backend, depth: maxDepth }
+              ])
+            }
+            className="mt-2 w-full py-1.5 bg-zinc-800 hover:bg-zinc-900 border border-zinc-600 text-zinc-300 text-[11px] rounded transition"
+          >
+            + Bookmark Current View
+          </button>
+        </aside>
+
+        {/* Center: Graph View (Google Maps style zoom/pan) */}
+        <main
+          className="flex-1 bg-zinc-600 rounded relative overflow-hidden flex flex-col border border-zinc-500 cursor-grab active:cursor-grabbing"
+          onMouseDown={handleMouseDown}
+          onMouseMove={handleMouseMove}
+          onMouseUp={handleMouseUp}
+        >
+          {/* Canvas HUD Overlay */}
+          <div className="absolute top-3 left-3 bg-zinc-800/90 backdrop-blur px-3 py-1.5 rounded text-xs text-zinc-300 font-mono pointer-events-none border border-zinc-700 z-10">
+            Graph View — Navigable, Zoom in/out like Google Maps
+          </div>
+
+          {/* Zoom Controls Overlay */}
+          <div className="absolute bottom-4 right-4 flex flex-col gap-1 z-10">
+            <button
+              onClick={() => setZoomLevel((z) => Math.min(2, z + 0.15))}
+              className="w-8 h-8 bg-zinc-800/90 hover:bg-black text-white font-bold rounded flex items-center justify-center text-sm border border-zinc-700 shadow"
+            >
+              +
+            </button>
+            <button
+              onClick={() => setZoomLevel((z) => Math.max(0.4, z - 0.15))}
+              className="w-8 h-8 bg-zinc-800/90 hover:bg-black text-white font-bold rounded flex items-center justify-center text-sm border border-zinc-700 shadow"
+            >
+              -
+            </button>
+            <button
+              onClick={() => {
+                setZoomLevel(1);
+                setPanOffset({ x: 0, y: 0 });
+              }}
+              className="w-8 h-8 bg-zinc-800/90 hover:bg-black text-zinc-400 hover:text-white text-[10px] rounded flex items-center justify-center border border-zinc-700 shadow font-mono"
+            >
+              Reset
+            </button>
+          </div>
+
+          {/* Pannable/Zoomable Canvas Area */}
+          <div
+            className="w-full h-full flex items-center justify-center transition-transform duration-75"
+            style={{
+              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`,
+              transformOrigin: 'center center',
+            }}
+          >
+            {resultsList.length === 0 ? (
+              <div className="text-zinc-400 text-xs font-mono">
+                No active nodes. Run a query from the right panel.
+              </div>
+            ) : (
+              <div className="flex items-center space-x-6">
+                {/* Target Unit Node */}
+                <div
+                  onClick={() => setSelectedNode(unitId)}
+                  className={`p-4 rounded-lg border-2 shadow-lg cursor-pointer transition ${
+                    selectedNode === unitId
+                      ? 'bg-zinc-900 border-white text-white ring-2 ring-white'
+                      : 'bg-zinc-800 border-zinc-400 text-zinc-200 hover:border-white'
+                  }`}
+                >
+                  <div className="text-[10px] font-mono text-zinc-400 uppercase">Target Unit</div>
+                  <div className="text-sm font-bold font-mono">{unitId}</div>
+                </div>
+
+                {/* Render Traversal Ancestors / Predecessors */}
+                {resultsList.map((nodeName, idx) => (
+                  <React.Fragment key={idx}>
+                    <div className="flex flex-col items-center">
+                      <span className="text-[9px] font-mono text-zinc-300">hop #{idx + 1}</span>
+                      <div className="w-8 h-[2px] bg-zinc-300 my-1"></div>
+                    </div>
+
+                    <div
+                      onClick={() => setSelectedNode(nodeName)}
+                      className={`p-4 rounded-lg border-2 shadow-lg cursor-pointer transition ${
+                        selectedNode === nodeName
+                          ? 'bg-zinc-900 border-white text-white ring-2 ring-white'
+                          : 'bg-zinc-800 border-zinc-400 text-zinc-200 hover:border-white'
+                      }`}
+                    >
+                      <div className="text-[10px] font-mono text-zinc-400 uppercase">
+                        {endpointType === 'ancestors' ? 'Ancestor' : 'Predecessor'}
+                      </div>
+                      <div className="text-sm font-bold font-mono">{nodeName}</div>
+                    </div>
+                  </React.Fragment>
+                ))}
+              </div>
+            )}
+          </div>
+        </main>
+
+        {/* Right Column: Filters, Parameters, Entry Fields */}
+        <aside className="w-72 bg-zinc-700 text-zinc-200 rounded flex flex-col border border-zinc-600 p-4 space-y-4 overflow-y-auto">
+          <div className="font-semibold text-xs uppercase tracking-wider text-zinc-300 pb-2 border-b border-zinc-600">
+            Filters, Parameters, Entry Fields
+          </div>
+
+          {/* Unit ID Field */}
           <div>
-            <h2 className="text-xs font-bold text-slate-400 uppercase tracking-wider">
-              Step 3: Database Architecture Benchmark
-            </h2>
-            <p className="text-xs text-slate-400 mt-0.5">Compare traversal query speeds as graph depth grows</p>
+            <label className="block text-[11px] uppercase font-mono text-zinc-300 mb-1">
+              Unit ID
+            </label>
+            <input
+              type="text"
+              value={unitId}
+              onChange={(e) => setUnitId(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-zinc-800 border border-zinc-500 rounded text-xs font-mono text-white focus:outline-none focus:border-white"
+            />
           </div>
-          <div className="flex items-center space-x-2 text-xs bg-slate-800 px-3 py-1.5 rounded border border-slate-700">
-            <span className="text-slate-300">Depth:</span>
+
+          {/* Traversal Type */}
+          <div>
+            <label className="block text-[11px] uppercase font-mono text-zinc-300 mb-1">
+              Traversal Direction
+            </label>
+            <select
+              value={endpointType}
+              onChange={(e) => setEndpointType(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-zinc-800 border border-zinc-500 rounded text-xs font-mono text-white focus:outline-none"
+            >
+              <option value="ancestors">Upstream (/ancestors)</option>
+              <option value="predecessors">Downstream (/predecessors)</option>
+            </select>
+          </div>
+
+          {/* Database Engine */}
+          <div>
+            <label className="block text-[11px] uppercase font-mono text-zinc-300 mb-1">
+              Backend Architecture
+            </label>
+            <select
+              value={backend}
+              onChange={(e) => setBackend(e.target.value)}
+              className="w-full px-2.5 py-1.5 bg-zinc-800 border border-zinc-500 rounded text-xs font-mono text-white focus:outline-none"
+            >
+              <option value="recursive-sql">Recursive SQL</option>
+              <option value="closure-table">Closure Table</option>
+              <option value="neo4j">Neo4j Graph DB</option>
+            </select>
+          </div>
+
+          {/* Max Depth */}
+          <div>
+            <div className="flex justify-between text-[11px] uppercase font-mono text-zinc-300 mb-1">
+              <span>Max Depth</span>
+              <span className="text-white font-bold">{maxDepth} hops</span>
+            </div>
             <input
               type="range"
-              min="5"
+              min="1"
               max="100"
-              value={depthHops}
-              onChange={(e) => setDepthHops(parseInt(e.target.value))}
-              className="accent-blue-500 w-24"
+              value={maxDepth}
+              onChange={(e) => setMaxDepth(parseInt(e.target.value))}
+              className="w-full accent-white cursor-pointer"
             />
-            <span className="font-mono text-cyan-400 font-bold w-12 text-right">{depthHops} hops</span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-          {/* Neo4j */}
-          <div className="p-4 rounded-lg bg-slate-950/60 border border-blue-500/40">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-xs font-bold text-white">Neo4j Graph DB</span>
-              <span className="text-[10px] bg-blue-900/50 text-blue-300 px-1.5 py-0.5 rounded font-mono">Best Pick</span>
-            </div>
-            <div className="text-2xl font-bold font-mono text-emerald-400 my-1">{neo4jMs} ms</div>
-            <p className="text-[11px] text-slate-400">Pointer dereference. Fast, stable traversal regardless of depth.</p>
           </div>
 
-          {/* Closure Table */}
-          <div className="p-4 rounded-lg bg-slate-950/60 border border-purple-500/30">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-xs font-bold text-white">Closure Table</span>
-              <span className="text-[10px] bg-purple-900/50 text-purple-300 px-1.5 py-0.5 rounded font-mono">Fast Read</span>
-            </div>
-            <div className="text-2xl font-bold font-mono text-emerald-400 my-1">{closureMs} ms</div>
-            <p className="text-[11px] text-slate-400">Fast reads, but suffers huge write-amplification on frequent inserts.</p>
-          </div>
+          {/* Action Button */}
+          <button
+            onClick={handleQuery}
+            disabled={loading}
+            className="w-full py-2 bg-zinc-900 hover:bg-black text-white font-medium text-xs rounded transition uppercase tracking-wider"
+          >
+            {loading ? 'Traversing...' : 'Execute Traversal'}
+          </button>
 
-          {/* Recursive SQL */}
-          <div className="p-4 rounded-lg bg-slate-950/60 border border-amber-500/30">
-            <div className="flex justify-between items-center mb-1">
-              <span className="text-xs font-bold text-white">Recursive SQL</span>
-              <span className="text-[10px] bg-amber-900/50 text-amber-300 px-1.5 py-0.5 rounded font-mono">Current QS</span>
+          {/* Error Message */}
+          {apiError && (
+            <div className="p-2.5 bg-zinc-800 border border-zinc-500 rounded text-[11px] text-zinc-300 font-mono">
+              <b>Error:</b> {apiError}
             </div>
-            <div className={`text-2xl font-bold font-mono my-1 ${sqlMs > 1000 ? 'text-rose-400' : 'text-amber-400'}`}>
-              {sqlMs >= 9999 ? '> 10,000 ms' : `${sqlMs} ms`}
+          )}
+
+          {/* Inspector Box */}
+          {selectedNode && (
+            <div className="mt-4 pt-3 border-t border-zinc-600 space-y-1.5 text-xs font-mono">
+              <span className="text-zinc-400 text-[10px] uppercase block">Selected Element</span>
+              <div className="p-2 bg-zinc-800 rounded border border-zinc-600">
+                <div className="text-white font-bold">{selectedNode}</div>
+                <div className="text-[10px] text-zinc-400 mt-1">
+                  Status: 200 OK • Depth: {maxDepth}
+                </div>
+              </div>
             </div>
-            <p className="text-[11px] text-slate-400">Exponential joins slow down quickly past 15–20 hops.</p>
-          </div>
-        </div>
+          )}
+        </aside>
+
       </div>
     </div>
   );
