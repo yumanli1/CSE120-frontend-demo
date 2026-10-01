@@ -1,92 +1,168 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 
-const API_BASE_URL = 'http://localhost:8000';
+// Mock datasets for standalone demonstration
+const MOCK_GENEALOGY = {
+  ancestors: ['RAW-SLURRY-BATCH-01', 'MIXER-TANK-04', 'COATED-ROLL-12', 'SLIT-STRIP-88', 'CELL-STACK-02'],
+  predecessors: ['CELL-ASSEMBLY-PACK-01', 'MODULE-TRAY-09', 'BATTERY-PACK-FINAL'],
+};
+
+// Dedicated Plotly Canvas Component
+function PlotlyGraph({ targetUnit, nodesList, endpointType, onNodeSelect, selectedNode }) {
+  const containerRef = useRef(null);
+
+  useEffect(() => {
+    if (!window.Plotly || !containerRef.current) return;
+
+    // Build DAG Coordinates
+    // Target Unit at x = 0, y = 0
+    // Ancestors placed to the left (negative x) or predecessors to the right (positive x)
+    const isAncestors = endpointType === 'ancestors';
+    const allLabels = isAncestors
+      ? [...nodesList].reverse().concat([targetUnit])
+      : [targetUnit].concat(nodesList);
+
+    const xCoords = allLabels.map((_, i) => i * 1.8);
+    const yCoords = allLabels.map((_, i) => (i % 2 === 0 ? 0.2 : -0.2));
+
+    // Construct Edges (connecting lines between adjacent steps)
+    const edgeX = [];
+    const edgeY = [];
+    for (let i = 0; i < allLabels.length - 1; i++) {
+      edgeX.push(xCoords[i], xCoords[i + 1], null);
+      edgeY.push(yCoords[i], yCoords[i + 1], null);
+    }
+
+    // Node markers styling & selection highlighting
+    const markerColors = allLabels.map((lbl) =>
+      lbl === selectedNode ? '#ffffff' : lbl === targetUnit ? '#d4d4d8' : '#71717a'
+    );
+    const markerSizes = allLabels.map((lbl) => (lbl === selectedNode ? 28 : 22));
+    const borderColors = allLabels.map((lbl) => (lbl === selectedNode ? '#000000' : '#27272a'));
+
+    // Plotly Traces: 1 for Lines (Edges), 1 for Nodes (Scatter markers)
+    const traces = [
+      {
+        type: 'scatter',
+        x: edgeX,
+        y: edgeY,
+        mode: 'lines',
+        line: { color: '#a1a1aa', width: 2.5, dash: 'solid' },
+        hoverinfo: 'none',
+        showlegend: false,
+      },
+      {
+        type: 'scatter',
+        x: xCoords,
+        y: yCoords,
+        mode: 'markers+text',
+        text: allLabels,
+        textposition: 'top center',
+        textfont: { family: 'monospace', size: 11, color: '#f4f4f5' },
+        hoverinfo: 'text',
+        hovertext: allLabels.map((lbl, i) => `<b>Node:</b> ${lbl}<br><b>Sequence:</b> Step ${i + 1}`),
+        marker: {
+          size: markerSizes,
+          color: markerColors,
+          line: { color: borderColors, width: 2 },
+        },
+        showlegend: false,
+      },
+    ];
+
+    // Plotly Layout (Google Maps style pan/zoom enabled)
+    const layout = {
+      paper_bgcolor: 'transparent',
+      plot_bgcolor: 'transparent',
+      hovermode: 'closest',
+      dragmode: 'pan', // Pan by dragging like Google Maps
+      autosize: true,
+      margin: { l: 40, r: 40, t: 40, b: 40 },
+      xaxis: {
+        showgrid: true,
+        zeroline: false,
+        showticklabels: false,
+        gridcolor: '#52525b',
+      },
+      yaxis: {
+        showgrid: true,
+        zeroline: false,
+        showticklabels: false,
+        gridcolor: '#52525b',
+        range: [-1.2, 1.2],
+      },
+    };
+
+    // Responsive configuration with standard zoom/pan controls
+    const config = {
+      responsive: true,
+      scrollZoom: true, // Zoom in/out with mouse wheel
+      displayModeBar: true,
+      modeBarButtonsToRemove: ['lasso2d', 'select2d'],
+      displaylogo: false,
+    };
+
+    window.Plotly.newPlot(containerRef.current, traces, layout, config);
+
+    // Click event to select nodes
+    const graphDiv = containerRef.current;
+    const clickHandler = (data) => {
+      if (data && data.points && data.points[0]) {
+        const clickedLabel = allLabels[data.points[0].pointIndex];
+        if (clickedLabel) onNodeSelect(clickedLabel);
+      }
+    };
+    graphDiv.on('plotly_click', clickHandler);
+
+    return () => {
+      if (graphDiv && graphDiv.removeAllListeners) {
+        graphDiv.removeAllListeners('plotly_click');
+      }
+    };
+  }, [targetUnit, nodesList, endpointType, selectedNode]);
+
+  return <div ref={containerRef} className="w-full h-full min-h-[380px]" />;
+}
 
 export default function App() {
-  // Authentication State (Section 1 Wireframe)
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [username, setUsername] = useState('data-engineer');
   const [password, setPassword] = useState('••••••••');
 
-  // Query and Configuration State (Section 2 Right Sidebar)
   const [unitId, setUnitId] = useState('UNIT-123');
   const [endpointType, setEndpointType] = useState('ancestors');
   const [backend, setBackend] = useState('recursive-sql');
   const [maxDepth, setMaxDepth] = useState(20);
 
-  // Traversal & Telemetry Data
   const [loading, setLoading] = useState(false);
-  const [apiError, setApiError] = useState(null);
-  const [resultsList, setResultsList] = useState(['material-1', 'process-1']);
-  const [selectedNode, setSelectedNode] = useState('process-1');
-  const [clientLatency, setClientLatency] = useState(null);
+  const [resultsList, setResultsList] = useState(MOCK_GENEALOGY.ancestors);
+  const [selectedNode, setSelectedNode] = useState(MOCK_GENEALOGY.ancestors[0]);
+  const [clientLatency, setClientLatency] = useState(8.4);
 
-  // Saved Views (Section 2 Left Sidebar)
   const [savedViews, setSavedViews] = useState([
     { id: 1, title: 'Anode Slurry Run #104', unit: 'UNIT-104', backend: 'neo4j', depth: 25 },
     { id: 2, title: 'Cell Formation Audit', unit: 'UNIT-123', backend: 'recursive-sql', depth: 20 },
     { id: 3, title: 'Separator Roll Defects', unit: 'UNIT-509', backend: 'closure-table', depth: 40 },
   ]);
 
-  // Graph Canvas Pan & Zoom State (Section 2 Center)
-  const [zoomLevel, setZoomLevel] = useState(1);
-  const [panOffset, setPanOffset] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState({ x: 0, y: 0 });
-
-  // Handle Login Submission
   const handleLogin = (e) => {
     e.preventDefault();
-    if (username.trim()) {
-      setIsAuthenticated(true);
-    }
+    if (username.trim()) setIsAuthenticated(true);
   };
 
-  // Fetch Live Traversal from FastAPI
-  const handleQuery = async () => {
+  const handleQuery = () => {
     setLoading(true);
-    setApiError(null);
-    const start = performance.now();
-
-    try {
-      const res = await fetch(
-        `${API_BASE_URL}/units/${unitId}/${endpointType}?backend=${backend}&max_depth=${maxDepth}`
-      );
-      if (!res.ok) {
-        throw new Error(`Server returned ${res.status}: ${res.statusText}`);
-      }
-      const data = await res.json();
-      const end = performance.now();
-      setClientLatency((end - start).toFixed(1));
-
-      const items = data[endpointType] || [];
+    setTimeout(() => {
+      const items = endpointType === 'ancestors' ? MOCK_GENEALOGY.ancestors : MOCK_GENEALOGY.predecessors;
       setResultsList(items);
-      setSelectedNode(items.length > 0 ? items[items.length - 1] : null);
-    } catch (err) {
-      setApiError(err.message);
-    } finally {
+      setSelectedNode(items[0]);
+      const latency = backend === 'recursive-sql' ? (maxDepth * 1.4).toFixed(1) : backend === 'closure-table' ? 4.2 : 2.1;
+      setClientLatency(latency);
       setLoading(false);
-    }
+    }, 200);
   };
-
-  // Graph Mouse Pan Event Handlers
-  const handleMouseDown = (e) => {
-    setIsPanning(true);
-    setPanStart({ x: e.clientX - panOffset.x, y: e.clientY - panOffset.y });
-  };
-
-  const handleMouseMove = (e) => {
-    if (!isPanning) return;
-    setPanOffset({
-      x: e.clientX - panStart.x,
-      y: e.clientY - panStart.y,
-    });
-  };
-
-  const handleMouseUp = () => setIsPanning(false);
 
   // -------------------------------------------------------------
-  // SECTION 1: LOGIN VIEW WIREFRAME
+  // SECTION 1: LOGIN VIEW
   // -------------------------------------------------------------
   if (!isAuthenticated) {
     return (
@@ -145,11 +221,10 @@ export default function App() {
   }
 
   // -------------------------------------------------------------
-  // SECTION 2: WORKSPACE & INTERACTIVE WIREFRAME
+  // SECTION 2: WORKSPACE WITH PLOTLY GRAPH VIEW
   // -------------------------------------------------------------
   return (
     <div className="min-h-screen bg-zinc-900 text-zinc-100 flex flex-col font-sans select-none">
-      
       {/* Top Navigation / Tool Bar */}
       <header className="h-14 bg-zinc-300 text-zinc-900 border-b border-zinc-400 px-6 flex items-center justify-between shadow-sm">
         <div className="flex items-center space-x-4">
@@ -162,11 +237,9 @@ export default function App() {
         </div>
 
         <div className="flex items-center space-x-3 text-xs">
-          {clientLatency && (
-            <span className="text-zinc-600 font-mono hidden sm:inline">
-              Latency: <b>{clientLatency}ms</b>
-            </span>
-          )}
+          <span className="text-zinc-600 font-mono hidden sm:inline">
+            Latency: <b>{clientLatency}ms</b>
+          </span>
           <button
             onClick={() => setIsAuthenticated(false)}
             className="px-3 py-1 bg-zinc-800 hover:bg-black text-white rounded font-medium transition"
@@ -178,13 +251,12 @@ export default function App() {
 
       {/* Main 3-Column Workspace */}
       <div className="flex-1 flex overflow-hidden p-3 gap-3">
-        
         {/* Left Column: Saved Views */}
         <aside className="w-56 bg-zinc-700 text-zinc-200 rounded flex flex-col border border-zinc-600 p-3">
           <div className="font-semibold text-xs uppercase tracking-wider text-zinc-300 pb-2 border-b border-zinc-600">
             Saved Views
           </div>
-          
+
           <div className="flex-1 overflow-y-auto mt-3 space-y-2 text-xs">
             {savedViews.map((view) => (
               <div
@@ -208,7 +280,7 @@ export default function App() {
             onClick={() =>
               setSavedViews([
                 ...savedViews,
-                { id: Date.now(), title: `Query ${unitId}`, unit: unitId, backend, depth: maxDepth }
+                { id: Date.now(), title: `Query ${unitId}`, unit: unitId, backend, depth: maxDepth },
               ])
             }
             className="mt-2 w-full py-1.5 bg-zinc-800 hover:bg-zinc-900 border border-zinc-600 text-zinc-300 text-[11px] rounded transition"
@@ -217,105 +289,30 @@ export default function App() {
           </button>
         </aside>
 
-        {/* Center: Graph View (Google Maps style zoom/pan) */}
-        <main
-          className="flex-1 bg-zinc-600 rounded relative overflow-hidden flex flex-col border border-zinc-500 cursor-grab active:cursor-grabbing"
-          onMouseDown={handleMouseDown}
-          onMouseMove={handleMouseMove}
-          onMouseUp={handleMouseUp}
-        >
-          {/* Canvas HUD Overlay */}
-          <div className="absolute top-3 left-3 bg-zinc-800/90 backdrop-blur px-3 py-1.5 rounded text-xs text-zinc-300 font-mono pointer-events-none border border-zinc-700 z-10">
-            Graph View — Navigable, Zoom in/out like Google Maps
+        {/* Center Column: Plotly Graph View */}
+        <main className="flex-1 bg-zinc-600 rounded relative overflow-hidden flex flex-col border border-zinc-500">
+          <div className="p-2 px-3 bg-zinc-700/80 border-b border-zinc-500 flex items-center justify-between text-xs text-zinc-200 font-mono">
+            <span>Plotly Lineage Canvas — Drag to Pan, Scroll to Zoom</span>
+            <span className="text-[10px] text-zinc-300">Click any node to inspect</span>
           </div>
 
-          {/* Zoom Controls Overlay */}
-          <div className="absolute bottom-4 right-4 flex flex-col gap-1 z-10">
-            <button
-              onClick={() => setZoomLevel((z) => Math.min(2, z + 0.15))}
-              className="w-8 h-8 bg-zinc-800/90 hover:bg-black text-white font-bold rounded flex items-center justify-center text-sm border border-zinc-700 shadow"
-            >
-              +
-            </button>
-            <button
-              onClick={() => setZoomLevel((z) => Math.max(0.4, z - 0.15))}
-              className="w-8 h-8 bg-zinc-800/90 hover:bg-black text-white font-bold rounded flex items-center justify-center text-sm border border-zinc-700 shadow"
-            >
-              -
-            </button>
-            <button
-              onClick={() => {
-                setZoomLevel(1);
-                setPanOffset({ x: 0, y: 0 });
-              }}
-              className="w-8 h-8 bg-zinc-800/90 hover:bg-black text-zinc-400 hover:text-white text-[10px] rounded flex items-center justify-center border border-zinc-700 shadow font-mono"
-            >
-              Reset
-            </button>
-          </div>
-
-          {/* Pannable/Zoomable Canvas Area */}
-          <div
-            className="w-full h-full flex items-center justify-center transition-transform duration-75"
-            style={{
-              transform: `translate(${panOffset.x}px, ${panOffset.y}px) scale(${zoomLevel})`,
-              transformOrigin: 'center center',
-            }}
-          >
-            {resultsList.length === 0 ? (
-              <div className="text-zinc-400 text-xs font-mono">
-                No active nodes. Run a query from the right panel.
-              </div>
-            ) : (
-              <div className="flex items-center space-x-6">
-                {/* Target Unit Node */}
-                <div
-                  onClick={() => setSelectedNode(unitId)}
-                  className={`p-4 rounded-lg border-2 shadow-lg cursor-pointer transition ${
-                    selectedNode === unitId
-                      ? 'bg-zinc-900 border-white text-white ring-2 ring-white'
-                      : 'bg-zinc-800 border-zinc-400 text-zinc-200 hover:border-white'
-                  }`}
-                >
-                  <div className="text-[10px] font-mono text-zinc-400 uppercase">Target Unit</div>
-                  <div className="text-sm font-bold font-mono">{unitId}</div>
-                </div>
-
-                {/* Render Traversal Ancestors / Predecessors */}
-                {resultsList.map((nodeName, idx) => (
-                  <React.Fragment key={idx}>
-                    <div className="flex flex-col items-center">
-                      <span className="text-[9px] font-mono text-zinc-300">hop #{idx + 1}</span>
-                      <div className="w-8 h-[2px] bg-zinc-300 my-1"></div>
-                    </div>
-
-                    <div
-                      onClick={() => setSelectedNode(nodeName)}
-                      className={`p-4 rounded-lg border-2 shadow-lg cursor-pointer transition ${
-                        selectedNode === nodeName
-                          ? 'bg-zinc-900 border-white text-white ring-2 ring-white'
-                          : 'bg-zinc-800 border-zinc-400 text-zinc-200 hover:border-white'
-                      }`}
-                    >
-                      <div className="text-[10px] font-mono text-zinc-400 uppercase">
-                        {endpointType === 'ancestors' ? 'Ancestor' : 'Predecessor'}
-                      </div>
-                      <div className="text-sm font-bold font-mono">{nodeName}</div>
-                    </div>
-                  </React.Fragment>
-                ))}
-              </div>
-            )}
+          <div className="flex-1 w-full h-full relative">
+            <PlotlyGraph
+              targetUnit={unitId}
+              nodesList={resultsList}
+              endpointType={endpointType}
+              selectedNode={selectedNode}
+              onNodeSelect={(node) => setSelectedNode(node)}
+            />
           </div>
         </main>
 
-        {/* Right Column: Filters, Parameters, Entry Fields */}
+        {/* Right Column: Parameters & Filters */}
         <aside className="w-72 bg-zinc-700 text-zinc-200 rounded flex flex-col border border-zinc-600 p-4 space-y-4 overflow-y-auto">
           <div className="font-semibold text-xs uppercase tracking-wider text-zinc-300 pb-2 border-b border-zinc-600">
             Filters, Parameters, Entry Fields
           </div>
 
-          {/* Unit ID Field */}
           <div>
             <label className="block text-[11px] uppercase font-mono text-zinc-300 mb-1">
               Unit ID
@@ -328,7 +325,6 @@ export default function App() {
             />
           </div>
 
-          {/* Traversal Type */}
           <div>
             <label className="block text-[11px] uppercase font-mono text-zinc-300 mb-1">
               Traversal Direction
@@ -343,7 +339,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Database Engine */}
           <div>
             <label className="block text-[11px] uppercase font-mono text-zinc-300 mb-1">
               Backend Architecture
@@ -359,7 +354,6 @@ export default function App() {
             </select>
           </div>
 
-          {/* Max Depth */}
           <div>
             <div className="flex justify-between text-[11px] uppercase font-mono text-zinc-300 mb-1">
               <span>Max Depth</span>
@@ -375,36 +369,26 @@ export default function App() {
             />
           </div>
 
-          {/* Action Button */}
           <button
             onClick={handleQuery}
             disabled={loading}
             className="w-full py-2 bg-zinc-900 hover:bg-black text-white font-medium text-xs rounded transition uppercase tracking-wider"
           >
-            {loading ? 'Traversing...' : 'Execute Traversal'}
+            {loading ? 'Plotting...' : 'Execute Traversal'}
           </button>
 
-          {/* Error Message */}
-          {apiError && (
-            <div className="p-2.5 bg-zinc-800 border border-zinc-500 rounded text-[11px] text-zinc-300 font-mono">
-              <b>Error:</b> {apiError}
-            </div>
-          )}
-
-          {/* Inspector Box */}
           {selectedNode && (
             <div className="mt-4 pt-3 border-t border-zinc-600 space-y-1.5 text-xs font-mono">
               <span className="text-zinc-400 text-[10px] uppercase block">Selected Element</span>
               <div className="p-2 bg-zinc-800 rounded border border-zinc-600">
                 <div className="text-white font-bold">{selectedNode}</div>
                 <div className="text-[10px] text-zinc-400 mt-1">
-                  Status: 200 OK • Depth: {maxDepth}
+                  Target: {unitId} • Depth: {maxDepth}
                 </div>
               </div>
             </div>
           )}
         </aside>
-
       </div>
     </div>
   );
