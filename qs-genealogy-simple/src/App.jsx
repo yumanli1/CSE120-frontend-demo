@@ -1,8 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 
-// ==========================================
-// 1. INLINE MOCK DATASET (BATTERY GENEALOGY)
-// ==========================================
+// Mock dataset
 const INITIAL_SAVED_VIEWS = [
   { id: '1', name: 'Saved View 1', unit: 'UNIT-01', type: 'GraphType1', mode: 'upstream', depth: 15 },
   { id: '2', name: 'Saved View 2', unit: 'LOT-402', type: 'GraphType2', mode: 'upstream', depth: 25 },
@@ -61,9 +59,7 @@ const MOCK_DATASET = {
   }
 };
 
-// ==========================================
-// 2. INLINE LOGIN PAGE COMPONENT
-// ==========================================
+// login page
 function LoginPage({ onLogin }) {
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
@@ -123,9 +119,7 @@ function LoginPage({ onLogin }) {
   );
 }
 
-// ==========================================
-// 3. MULTI-TYPE PLOTLY CANVAS COMPONENT
-// ==========================================
+// Plotly Canvas Component
 function PlotlyCanvas({ targetUnit, graphType = 'GraphType1', isDarkMode, containerId = 'plotly-canvas-div' }) {
   const containerRef = useRef(null);
 
@@ -161,7 +155,7 @@ function PlotlyCanvas({ targetUnit, graphType = 'GraphType1', isDarkMode, contai
       font: { color: textColor, family: 'sans-serif' }
     };
 
-    // --- GRAPHTYPE 1: Interactive DAG Network Tree ---
+    // Interactive DAG Network Tree
     if (graphType === 'GraphType1') {
       const nodeMap = new Map();
       dataObj.nodes.forEach((n) => nodeMap.set(n.id, n));
@@ -217,7 +211,7 @@ function PlotlyCanvas({ targetUnit, graphType = 'GraphType1', isDarkMode, contai
         yaxis: { showgrid: false, zeroline: false, showticklabels: false, range: [-0.6, 0.6] },
       };
     } 
-    // --- GRAPHTYPE 2: Genealogy Depth Hierarchy (Horizontal Bar Chart) ---
+    // Genealogy Depth Hierarchy (Horizontal Bar Chart)
     else if (graphType === 'GraphType2') {
       const sortedNodes = [...dataObj.nodes].sort((a, b) => b.depth - a.depth);
       traces = [
@@ -244,7 +238,7 @@ function PlotlyCanvas({ targetUnit, graphType = 'GraphType1', isDarkMode, contai
         yaxis: { automargin: true }
       };
     } 
-    // --- GRAPHTYPE 3: Process Status Breakdown (Donut Chart) ---
+    // Process Status Breakdown (Donut Chart)
     else if (graphType === 'GraphType3') {
       const statusCounts = {};
       dataObj.nodes.forEach((n) => {
@@ -274,7 +268,7 @@ function PlotlyCanvas({ targetUnit, graphType = 'GraphType1', isDarkMode, contai
         legend: { orientation: 'h', y: -0.15, font: { color: textColor } }
       };
     } 
-    // --- GRAPHTYPE 4: Manufacturing Stage Pipeline Sequence (Scatter Plot) ---
+    // Manufacturing Stage Pipeline Sequence (Scatter Plot)
     else if (graphType === 'GraphType4') {
       traces = [
         {
@@ -320,9 +314,7 @@ function PlotlyCanvas({ targetUnit, graphType = 'GraphType1', isDarkMode, contai
   return <div id={containerId} ref={containerRef} className="w-full h-full" />;
 }
 
-// ==========================================
-// 4. LINEAGE DATA TABLE COMPONENT (CLEAN TEXT)
-// ==========================================
+// Lineage Data Table Component
 function LineageDataTable({ targetUnit, isDarkMode }) {
   const dataObj = MOCK_DATASET[targetUnit] || {
     nodes: [
@@ -366,9 +358,7 @@ function LineageDataTable({ targetUnit, isDarkMode }) {
   );
 }
 
-// ==========================================
-// 5. MAIN DASHBOARD APP
-// ==========================================
+// Main dashboard
 export default function App() {
   const [isAuthenticated, setIsAuthenticated] = useState(false);
   const [currentUser, setCurrentUser] = useState('');
